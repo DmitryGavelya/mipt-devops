@@ -5,14 +5,6 @@
 Конфигурация разделена по ответственности: Terraform создаёт ресурсы, Ansible
 настраивает ОС, а Bash и Compose отвечают за эксплуатацию приложения.
 
-## Структура
-
-```text
-terraform/                 сеть, VM, security group и service account
-ansible/                   inventory и идемпотентный playbook
-compose/                   app + nginx и конфигурации Nginx
-scripts/monitor.sh         проверка systemd и ошибок syslog за последний час
-```
 
 ## Развёртывание
 
@@ -35,7 +27,6 @@ terraform output instance_public_ip
 Security group разрешает SSH только из `ssh_cidr` и HTTP на порт 80. Не
 используйте `0.0.0.0/0` для SSH. Service account получает только
 `compute.editor`, а подключение к VM выполняется ключом пользователя `deployer`.
-
 ### 2. Ansible
 
 `ansible/inventory.ini` содержит адрес тестовой VM и подключается существующим
@@ -95,25 +86,9 @@ docker compose -f compose/docker-compose.yml config
 curl -fsS http://VM_IP
 ```
 
-Токены, приватные ключи и `terraform.tfstate` исключены из Git. Inventory
-содержит только адрес хоста и имя пользователя. Перед merge request проверьте
-`git diff --check` и само-ревью изменений.
 
-## Фактическая проверка тестовой VM
 
-На Ubuntu 24.04 VM `111.88.162.86` Docker был установлен, включён в автозапуск,
-а Compose stack запущен из `/opt/app`. Результат:
-
-```text
-NAME          IMAGE               SERVICE   STATUS
-app-app-1     nginx:1.27-alpine   app       Up
-app-nginx-1   nginx:1.27-alpine   nginx     Up
-Hello World
-service=docker status=active
-syslog_errors_last_hour=0 file=/var/log/syslog
-```
-
-Terraform-код подготовлен для Yandex Cloud; фактические `plan/apply` требуют
-персональных `cloud_id`, `folder_id`, `image_id`, токена и CIDR оператора.
-После заполнения `terraform.tfvars` команды `terraform init`, `plan`, `apply`
-создают state и VM, после чего адрес переносится в inventory.
+Проврка
+![img_1.png](img_1.png)
+![img.png](img.png)
+![img_2.png](img_2.png)
