@@ -124,8 +124,7 @@
         mode: "0755"
 
     - name: Start application stack
-      become_user: deployer
       ansible.builtin.command:
-        cmd: docker compose up -d --remove-orphans
+        cmd: sudo -u deployer docker compose up -d --remove-orphans
         chdir: /opt/app
       changed_when: false
