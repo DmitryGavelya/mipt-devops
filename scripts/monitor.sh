@@ -29,14 +29,17 @@ else
 fi
 
 if [[ -r "$syslog_file" ]]; then
-  current_prefix=$(date '+%b %e %H')
-  if previous_prefix=$(date -d '1 hour ago' '+%b %e %H' 2>/dev/null); then
-    :
-  else
-    previous_prefix=$(date -v-1H '+%b %e %H')
-  fi
+  prefixes=()
+  for minute_offset in $(seq 0 60); do
+    if prefix=$(date -d "-${minute_offset} minutes" '+%b %e %H:%M' 2>/dev/null); then
+      prefixes+=("$prefix")
+    else
+      prefixes+=("$(date -v-${minute_offset}M '+%b %e %H:%M')")
+    fi
+  done
+  prefix_pattern=$(IFS='|'; printf '%s' "${prefixes[*]}")
   errors=$(
-    grep -E -i "^(${current_prefix}|${previous_prefix}).*(error|err|critical|crit|failed|failure)" "$syslog_file" |
+    grep -E -i "^(${prefix_pattern}).*(error|err|critical|crit|failed|failure)" "$syslog_file" |
       awk 'END { print NR + 0 }' || true
   )
   printf 'syslog_errors_last_hour=%s file=%s\n' "$errors" "$syslog_file"

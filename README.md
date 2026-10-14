@@ -9,7 +9,7 @@
 
 ```text
 terraform/                 сеть, VM, security group и service account
-ansible/                   inventory-шаблон и идемпотентный playbook
+ansible/                   inventory и идемпотентный playbook
 compose/                   app + nginx и конфигурации Nginx
 scripts/monitor.sh         проверка systemd и ошибок syslog за последний час
 ```
@@ -38,21 +38,22 @@ Security group разрешает SSH только из `ssh_cidr` и HTTP на 
 
 ### 2. Ansible
 
-Скопируйте `ansible/inventory.ini.example` в `ansible/inventory.ini` и замените
-адрес на результат Terraform. Запустите playbook с ключом, соответствующим
-`ssh_public_key`:
+`ansible/inventory.ini` содержит адрес тестовой VM и подключается существующим
+администратором `student`. Для новой VM замените `ansible_host` результатом
+`terraform output instance_public_ip`; используйте SSH-ключ администратора:
 
 ```bash
 ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml \
-  --private-key ~/.ssh/id_ed25519
+  --private-key ~/.ssh/id_ed25519 -K
 ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml \
-  --private-key ~/.ssh/id_ed25519
+  --private-key ~/.ssh/id_ed25519 -K
 ```
 
 Второй запуск не должен менять ресурсы (ожидаемый итог: `changed=0`; фактический
 счётчик может отличаться, если на хосте уже были изменены исходные файлы).
 Playbook устанавливает Docker CE и Compose plugin, включает Docker при загрузке,
-создаёт `deployer` и копирует приложение в `/opt/app`.
+создаёт `deployer` с passwordless sudo, копирует приложение в `/opt/app` и
+запускает Compose от имени `deployer`.
 
 ### 3. Compose и проверка
 
@@ -94,5 +95,25 @@ docker compose -f compose/docker-compose.yml config
 curl -fsS http://VM_IP
 ```
 
-`terraform.tfstate`, токены, приватные ключи и рабочий inventory исключены из
-Git. Перед merge request проверьте `git diff --check` и само-ревью изменений.
+Токены, приватные ключи и `terraform.tfstate` исключены из Git. Inventory
+содержит только адрес хоста и имя пользователя. Перед merge request проверьте
+`git diff --check` и само-ревью изменений.
+
+## Фактическая проверка тестовой VM
+
+На Ubuntu 24.04 VM `111.88.162.86` Docker был установлен, включён в автозапуск,
+а Compose stack запущен из `/opt/app`. Результат:
+
+```text
+NAME          IMAGE               SERVICE   STATUS
+app-app-1     nginx:1.27-alpine   app       Up
+app-nginx-1   nginx:1.27-alpine   nginx     Up
+Hello World
+service=docker status=active
+syslog_errors_last_hour=0 file=/var/log/syslog
+```
+
+Terraform-код подготовлен для Yandex Cloud; фактические `plan/apply` требуют
+персональных `cloud_id`, `folder_id`, `image_id`, токена и CIDR оператора.
+После заполнения `terraform.tfvars` команды `terraform init`, `plan`, `apply`
+создают state и VM, после чего адрес переносится в inventory.

@@ -6,5 +6,4 @@
 crash.log
 *.retry
 .DS_Store
-ansible/inventory.ini
 .idea/
