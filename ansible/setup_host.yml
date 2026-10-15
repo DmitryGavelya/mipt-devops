@@ -13,6 +13,14 @@
       - docker-compose-plugin
 
   tasks:
+    - name: Remove obsolete HashiCorp apt repositories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/hashicorp.list
+        - /etc/apt/sources.list.d/hashicorp.sources
+
     - name: Install repository prerequisites
       ansible.builtin.apt:
         name:

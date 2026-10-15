@@ -1,94 +1,159 @@
-# MIPT DevOps: базовая инфраструктура
+# DevOps homework
 
-Проект поднимает минимальную среду для контейнерного приложения: сеть, подсеть,
-виртуальную машину в Yandex Cloud, Docker Engine, Compose и reverse proxy.
-Конфигурация разделена по ответственности: Terraform создаёт ресурсы, Ansible
-настраивает ОС, а Bash и Compose отвечают за эксплуатацию приложения.
+## Структура
 
+| Путь | Назначение |
+| --- | --- |
+| `ansible/` | создание `deployer`, установка Docker и Compose, запуск приложения |
+| `terraform/` | локальная Docker-инфраструктура: сеть, image, volume и Nginx на `127.0.0.1:8081` |
+| `scripts/monitor.sh` | проверка systemd-сервиса и ошибок в syslog |
+| `compose/` | приложение Hello World и Nginx reverse proxy |
 
-## Развёртывание
+Terraform-контейнер находится в сети `devops-infra-network` и использует volume
+`devops-infra-html`. Контейнеры Compose находятся в отдельной сети
+`app-network`; внешний `nginx` принимает запросы на порту 80 и передаёт их
+сервису `app`. Эти сети независимы.
 
-### 1. Terraform
+VM `111.88.162.86` уже предоставлена учебным стендом. Поэтому Terraform
+управляет локальными Docker-ресурсами на этой VM и не создаёт облачную VM,
+VPC или IAM-ресурсы.
 
-Нужны Terraform >= 1.5, аккаунт Yandex Cloud и права на создание Compute,
-VPC и service account. Скопируйте `terraform/terraform.tfvars.example` в
-`terraform/terraform.tfvars`, заполните значения и задайте токен через
-переменную окружения `YC_TOKEN` либо поле `yc_token` (секрет не коммитится).
+## Развёртывание на VM
 
-```bash
-cd terraform
-terraform init
-terraform validate
-terraform plan
-terraform apply
-terraform output instance_public_ip
-```
+1. Склонируйте проект и дважды запустите Ansible. Второй запуск должен показать
+   `changed=0`, что подтверждает идемпотентность:
 
-Security group разрешает SSH только из `ssh_cidr` и HTTP на порт 80. Не
-используйте `0.0.0.0/0` для SSH. Service account получает только
-`compute.editor`, а подключение к VM выполняется ключом пользователя `deployer`.
-### 2. Ansible
+   ```bash
+   git clone https://github.com/DmitryGavelya/mipt-devops.git "$HOME/mipt-devops"
+   cd "$HOME/mipt-devops"
+   ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml -k -K
+   ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml -k -K
+   ```
 
-`ansible/inventory.ini` содержит адрес тестовой VM и подключается существующим
-администратором `student`. Для новой VM замените `ansible_host` результатом
-`terraform output instance_public_ip`; используйте SSH-ключ администратора:
+2. Подключитесь к серверу и перейдите в каталог Terraform:
 
-```bash
-ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml \
-  --private-key ~/.ssh/id_ed25519 -K
-ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml \
-  --private-key ~/.ssh/id_ed25519 -K
-```
+   ```bash
+   ssh student@111.88.162.86
+   cd ~/mipt-devops/terraform
+   sudo chown -R student:student .
+   ```
 
-Второй запуск не должен менять ресурсы (ожидаемый итог: `changed=0`; фактический
-счётчик может отличаться, если на хосте уже были изменены исходные файлы).
-Playbook устанавливает Docker CE и Compose plugin, включает Docker при загрузке,
-создаёт `deployer` с passwordless sudo, копирует приложение в `/opt/app` и
-запускает Compose от имени `deployer`.
+3. На сервере Terraform запускается из официального Docker-образа. Provider
+   Docker хранится в локальном mirror, потому что Terraform Registry
+   недоступен из региона сервера:
 
-### 3. Compose и проверка
+   ```bash
+   terraform_vm() {
+     sudo docker run --rm \
+       -e TF_CLI_CONFIG_FILE=/terraformrc \
+       -v "$PWD:/workspace" \
+       -v /tmp/provider-mirror:/provider-mirror:ro \
+       -v /tmp/terraformrc:/terraformrc:ro \
+       -v /var/run/docker.sock:/var/run/docker.sock \
+       -w /workspace hashicorp/terraform:1.13.3 "$@"
+   }
 
-```bash
-ssh deployer@VM_IP 'cd /opt/app && docker compose up -d'
-ssh deployer@VM_IP 'cd /opt/app && docker compose ps'
-curl http://VM_IP
-```
+   terraform_vm init
+   terraform_vm validate
+   terraform_vm plan
+   terraform_vm apply -auto-approve
+   terraform_vm state list
+   curl -i http://127.0.0.1:8081/
+   ```
 
-Ожидаемый ответ содержит `Hello World`. Сервисы связаны внутренней сетью
-`app-network`: внешний `nginx` проксирует запрос на `app`, а `app` отдаёт
-статическую страницу своим Nginx.
+   В state ожидаются четыре ресурса:
 
-### 4. Мониторинг
+   ```text
+   docker_container.infra_smoke
+   docker_image.nginx
+   docker_network.infra
+   docker_volume.nginx_html
+   ```
 
-```bash
-chmod +x scripts/monitor.sh
-./scripts/monitor.sh docker
-ssh deployer@VM_IP 'sudo /opt/app/monitor.sh docker'
-```
+4. Проверьте мониторинг Docker:
 
-Скрипт завершает работу с ненулевым кодом для неактивного или неизвестного
-сервиса и печатает последние 10 строк `journalctl`. Для систем без
-`/var/log/syslog` выводит `unavailable`; путь можно передать вторым аргументом,
-что удобно для тестирования:
+   ```bash
+   sudo /opt/app/monitor.sh docker
+   ```
 
-```bash
-./scripts/monitor.sh docker ./fixtures/syslog
-```
+5. Проверьте Compose-приложение:
 
-## Проверка результата
+   ```bash
+   cd /opt/app
+   sudo -u deployer docker compose ps
+   curl -i http://127.0.0.1/
+   ```
 
-Для отчёта подходят выводы следующих команд:
+   С другого компьютера выполните:
 
-```bash
-terraform state list
-ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml
-docker compose -f compose/docker-compose.yml config
-curl -fsS http://VM_IP
-```
+   ```bash
+   curl -i http://111.88.162.86/
+   ```
 
+   Ожидаемый результат — `HTTP 200 OK` и страница `Hello World`.
 
+## Проверки для сдачи
 
-Проврка
-![img_1.png](img_1.png)
-![img.png](img.png)
-![img_2.png](img_2.png)
+Приложите скриншоты следующих результатов:
+
+1. Второй запуск Ansible с `changed=0`:
+
+   ```bash
+   ansible-playbook -i ansible/inventory.ini ansible/setup_host.yml -k -K
+   ```
+
+   ![Второй запуск Ansible](screenshots/ansible-idempotent.png)
+
+2. Четыре ресурса Terraform в state:
+
+   ```bash
+   terraform_vm state list
+   ```
+
+   ![Terraform state list](screenshots/terraform-state.png)
+
+3. Работа мониторинга Docker:
+
+   ```bash
+   sudo /opt/app/monitor.sh docker
+   ```
+
+   ![Мониторинг Docker](screenshots/monitor.png)
+
+4. Запущенные контейнеры Compose:
+
+   ```bash
+   cd /opt/app
+   sudo -u deployer docker compose ps
+   ```
+
+   ![Docker Compose ps](screenshots/compose-ps.png)
+
+5. Внешняя HTTP-проверка:
+
+   ```bash
+   curl -i http://111.88.162.86/
+   ```
+
+   ![HTTP 200 и Hello World](screenshots/http-check.png)
+
+## Что пришлось учесть
+
+Сначала Terraform рассматривался как инструмент создания облачной
+инфраструктуры. В учебном стенде облачные ресурсы не предоставляются, а VM
+выдаётся заранее, поэтому Terraform был адаптирован под Docker provider и
+запускается непосредственно на сервере через Docker socket.
+
+Обычный скачанный Terraform binary и provider Registry на VM недоступны.
+Поэтому используется официальный образ `hashicorp/terraform:1.13.3`, а
+провайдер Docker устанавливается из локального filesystem mirror.
+
+Ansible настраивает хост и запускает Compose, а Terraform создаёт отдельный
+smoke-контейнер на loopback-порту 8081. Это позволяет проверить Terraform и
+основное приложение одновременно, не занимая порт 80.
+
+## Git workflow
+
+Рабочая ветка проекта — `feature/infra-setup`. После проверки изменения
+передаются в `main` через Merge Request. Версия задания отмечена тегом
+`v0.1.0`.
