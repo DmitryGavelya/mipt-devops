@@ -8,6 +8,11 @@ output "terraform_container" {
   value       = docker_container.infra_smoke.name
 }
 
+output "terraform_volume" {
+  description = "Docker volume mounted by the Terraform-managed container."
+  value       = docker_volume.nginx_html.name
+}
+
 output "terraform_smoke_url" {
   description = "Local URL for the Terraform-managed smoke service."
   value       = "http://127.0.0.1:8081"
