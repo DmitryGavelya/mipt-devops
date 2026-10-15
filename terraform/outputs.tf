@@ -1,12 +1,14 @@
-output "instance_public_ip" {
-  description = "Public IP used by the Ansible inventory."
-  value       = yandex_compute_instance.main.network_interface[0].nat_ip_address
+output "terraform_network" {
+  description = "Docker network created by Terraform on the provided VM."
+  value       = docker_network.infra.name
 }
 
-output "network_id" {
-  value = yandex_vpc_network.main.id
+output "terraform_container" {
+  description = "Nginx smoke container created by Terraform."
+  value       = docker_container.infra_smoke.name
 }
 
-output "security_group_id" {
-  value = yandex_vpc_security_group.host.id
+output "terraform_smoke_url" {
+  description = "Local URL for the Terraform-managed smoke service."
+  value       = "http://127.0.0.1:8081"
 }
