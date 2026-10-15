@@ -1,0 +1,130 @@
+---
+- name: Prepare host for container workloads
+  hosts: app
+  become: true
+  gather_facts: true
+
+  vars:
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  tasks:
+    - name: Install repository prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+
+    - name: Create Docker keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Install Docker repository key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Configure Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ ansible_facts.architecture | replace('x86_64', 'amd64') }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/{{ ansible_facts.distribution | lower }} {{ ansible_facts.distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Remove conflicting Ubuntu Compose package
+      ansible.builtin.apt:
+        name: docker-compose-v2
+        state: absent
+
+    - name: Install Docker Engine and Compose plugin
+      ansible.builtin.apt:
+        name: "{{ docker_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Create deployer account
+      ansible.builtin.user:
+        name: deployer
+        groups: docker
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Allow deployer passwordless sudo
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/deployer
+        content: "deployer ALL=(ALL) NOPASSWD:ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Enable and start Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: /opt/app
+        state: directory
+        owner: deployer
+        group: docker
+        mode: "0755"
+
+    - name: Install application Compose file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../compose/docker-compose.yml"
+        dest: /opt/app/docker-compose.yml
+        owner: deployer
+        group: docker
+        mode: "0644"
+
+    - name: Install application page
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../compose/html/index.html"
+        dest: /opt/app/index.html
+        owner: deployer
+        group: docker
+        mode: "0644"
+
+    - name: Install application Nginx configuration
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../compose/app-nginx.conf"
+        dest: /opt/app/app-nginx.conf
+        owner: deployer
+        group: docker
+        mode: "0644"
+
+    - name: Install proxy Nginx configuration
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../compose/proxy-nginx.conf"
+        dest: /opt/app/proxy-nginx.conf
+        owner: deployer
+        group: docker
+        mode: "0644"
+
+    - name: Install monitoring script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/monitor.sh"
+        dest: /opt/app/monitor.sh
+        owner: deployer
+        group: docker
+        mode: "0755"
+
+    - name: Start application stack
+      ansible.builtin.command:
+        cmd: sudo -u deployer docker compose up -d --remove-orphans
+        chdir: /opt/app
+      changed_when: false
